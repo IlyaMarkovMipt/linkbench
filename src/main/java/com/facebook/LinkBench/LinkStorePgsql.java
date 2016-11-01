@@ -1,4 +1,9 @@
 /*
+ * LinkStore for PostgreSQL
+ * Author : woonhak.kang (woonhak.kang@gmail.com)
+ * Date : 01/26/2016
+ * 
+ * Original Copyright
  * Copyright 2012, Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,17 +38,18 @@ import java.util.Properties;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 
-public class LinkStoreMysql extends GraphStore {
+public class LinkStorePgsql extends GraphStore {
 
-  /* MySql database server configuration keys */
+  /* PostgreSQL database server configuration keys */
   public static final String CONFIG_HOST = "host";
   public static final String CONFIG_PORT = "port";
   public static final String CONFIG_USER = "user";
   public static final String CONFIG_PASSWORD = "password";
-  public static final String CONFIG_BULK_INSERT_BATCH = "mysql_bulk_insert_batch";
-  public static final String CONFIG_DISABLE_BINLOG_LOAD = "mysql_disable_binlog_load";
+  //public static final String CONFIG_BULK_INSERT_BATCH = "mysql_bulk_insert_batch";
+  //public static final String CONFIG_DISABLE_BINLOG_LOAD = "mysql_disable_binlog_load";
 
-  public static final int DEFAULT_BULKINSERT_SIZE = 1024;
+	//XXX woonhak, test small bulk insert size (sometimes JDBC buffer got overflowed);
+  public static final int DEFAULT_BULKINSERT_SIZE = 256;
 
   private static final boolean INTERNAL_TESTING = false;
 
@@ -70,11 +76,11 @@ public class LinkStoreMysql extends GraphStore {
 
   private final Logger logger = Logger.getLogger(ConfigUtil.LINKBENCH_LOGGER);
 
-  public LinkStoreMysql() {
+  public LinkStorePgsql() {
     super();
   }
 
-  public LinkStoreMysql(Properties props) throws IOException, Exception {
+  public LinkStorePgsql(Properties props) throws IOException, Exception {
     super();
     initialize(props, Phase.LOAD, 0);
   }
@@ -103,17 +109,18 @@ public class LinkStoreMysql extends GraphStore {
     pwd = ConfigUtil.getPropertyRequired(props, CONFIG_PASSWORD);
     port = props.getProperty(CONFIG_PORT);
 
-    if (port == null || port.equals("")) port = "3306"; //use default port
+    if (port == null || port.equals("")) port = "5432"; //use default port
     debuglevel = ConfigUtil.getDebugLevel(props);
     phase = currentPhase;
 
-    if (props.containsKey(CONFIG_BULK_INSERT_BATCH)) {
-      bulkInsertSize = ConfigUtil.getInt(props, CONFIG_BULK_INSERT_BATCH);
-    }
-    if (props.containsKey(CONFIG_DISABLE_BINLOG_LOAD)) {
-      disableBinLogForLoad = ConfigUtil.getBool(props,
-                                      CONFIG_DISABLE_BINLOG_LOAD);
-    }
+		/*woonhak, Disable additional configurations */
+//    if (props.containsKey(CONFIG_BULK_INSERT_BATCH)) {
+//      bulkInsertSize = ConfigUtil.getInt(props, CONFIG_BULK_INSERT_BATCH);
+//    }
+//    if (props.containsKey(CONFIG_DISABLE_BINLOG_LOAD)) {
+//      disableBinLogForLoad = ConfigUtil.getBool(props,
+//                                      CONFIG_DISABLE_BINLOG_LOAD);
+//    }
 
     // connect
     try {
@@ -133,9 +140,9 @@ public class LinkStoreMysql extends GraphStore {
     stmt_ro = null;
     stmt_rw = null;
 
-    String jdbcUrl = "jdbc:mysql://" + host + ":" + port + "/";
+    String jdbcUrl = "jdbc:postgresql://"+ host + ":" + port + "/";
 
-    Class.forName("com.mysql.jdbc.Driver").newInstance();
+    Class.forName("org.postgresql.Driver").newInstance();
 
     jdbcUrl += "?elideSetAutoCommits=true" +
                "&useLocalTransactionState=true" +
@@ -144,6 +151,9 @@ public class LinkStoreMysql extends GraphStore {
    /* Need affected row count from queries to distinguish updates/inserts
     * consistently across different MySql versions (see MySql bug 46675) */
                "&useAffectedRows=true";
+
+
+
 
     conn_rw = DriverManager.getConnection(jdbcUrl, user, pwd);
     conn_rw.setAutoCommit(false);
@@ -157,11 +167,15 @@ public class LinkStoreMysql extends GraphStore {
     stmt_ro = conn_ro.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,
                                       ResultSet.CONCUR_READ_ONLY);
 
-    if (phase == Phase.LOAD && disableBinLogForLoad) {
-      // Turn binary logging off for duration of connection
-      stmt_rw.executeUpdate("SET SESSION sql_log_bin=0");
-      stmt_ro.executeUpdate("SET SESSION sql_log_bin=0");
-    }
+		//XXX woonhak, check metadata pgsql JDBC driver support getGeneratedKeys() - probably not
+		//dmd = conn.getMetadata() and then run dmd.supportsGetGeneratedKeys()
+
+		/*disabled under pgsql */
+//    if (phase == Phase.LOAD && disableBinLogForLoad) {
+//      // Turn binary logging off for duration of connection
+//      stmt_rw.executeUpdate("SET SESSION sql_log_bin=0");
+//      stmt_ro.executeUpdate("SET SESSION sql_log_bin=0");
+//    }
   }
 
   @Override
@@ -172,12 +186,12 @@ public class LinkStoreMysql extends GraphStore {
       if (conn_rw != null) conn_rw.close();
       if (conn_ro != null) conn_ro.close();
     } catch (SQLException e) {
-      logger.error("Error while closing MySQL connection: ", e);
+      logger.error("Error while closing PostgreSQL connection: ", e);
     }
   }
 
   public void clearErrors(int threadID) {
-    logger.info("Reopening MySQL connection in threadID " + threadID);
+    logger.info("Reopening Pgsql connection in threadID " + threadID);
 
     try {
       if (conn_rw != null) {
@@ -200,6 +214,10 @@ public class LinkStoreMysql extends GraphStore {
    */
   private static final HashSet<String> retrySQLStates = populateRetrySQLStates();
 
+
+	/**
+	 * FIXME : woonhak check Error Code */
+
   /**
    *  Populate retrySQLStates
    *  SQLState codes are defined in MySQL Connector/J documentation:
@@ -214,12 +232,12 @@ public class LinkStoreMysql extends GraphStore {
 
   /**
    * Handle SQL exception by logging error and selecting how to respond
-   * @param ex SQLException thrown by MySQL JDBC driver
+   * @param ex SQLException thrown by PgSQL JDBC driver
    * @return true if transaction should be retried
    */
   private boolean processSQLException(SQLException ex, String op) {
     boolean retry = retrySQLStates.contains(ex.getSQLState());
-    String msg = "SQLException thrown by MySQL driver during execution of " +
+    String msg = "SQLException thrown by PgSQL driver during execution of " +
                  "operation: " + op + ".  ";
     msg += "Message was: '" + ex.getMessage() + "'.  ";
     msg += "SQLState was: " + ex.getSQLState() + ".  ";
@@ -350,6 +368,8 @@ public class LinkStoreMysql extends GraphStore {
       // if (id, link_type) is not there yet, add a new record with count = 1
       // The update happens atomically, with the latest count and version
       long currentTime = (new Date()).getTime();
+
+			/*XXX - woonhak - PostgeSQL Style UPSERT */
       String updatecount = "INSERT INTO " + dbid + "." + counttable +
                       "(id, link_type, count, time, version) " +
                       "VALUES (" + l.id1 +
@@ -357,9 +377,9 @@ public class LinkStoreMysql extends GraphStore {
                       ", " + base_count +
                       ", " + currentTime +
                       ", " + 0 + ") " +
-                      "ON DUPLICATE KEY UPDATE" +
-                      " count = count + " + update_count +
-                      ", version = version + 1 " +
+                      "ON CONFLICT ON CONSTRAINT " + counttable + "_pkey DO UPDATE SET " +
+                      " count = " + dbid + "." + counttable +".count + " + update_count +
+                      ", version = "+ dbid + "." + counttable +".version + 1 " +
                       ", time = " + currentTime + ";";
 
       if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
@@ -376,9 +396,11 @@ public class LinkStoreMysql extends GraphStore {
 
     if (update_data) {
       // query to update link data (the first query only updates visibility)
-      String updatedata = "UPDATE " + dbid + "." + linktable + " SET" +
+      String updatedata = "UPDATE linktable SET " +
                   " visibility = " + l.visibility +
-                  ", data = " +  stringLiteral(l.data)+
+                  //", data = convert_from(decode(" +  stringLiteral(l.data) + 
+									//", 'hex'), 'LATIN1')" +
+                  ", data = convert_from(" +  stringLiteral(l.data) + ", 'LATIN1')" +
                   ", time = " + l.time +
                   ", version = " + l.version +
                   " WHERE id1 = " + l.id1 +
@@ -425,11 +447,15 @@ public class LinkStoreMysql extends GraphStore {
           ", " + l.id2 +
           ", " + l.link_type +
           ", " + l.visibility +
-          ", " + stringLiteral(l.data) +
+          //", " + stringLiteral(l.data) +
+          //", convert_from(decode(" +  stringLiteral(l.data) + ", 'hex'), 'LATIN1')" +
+          ", convert_from(" +  stringLiteral(l.data) + ", 'LATIN1')" +
           ", " + l.time + ", " +
           l.version + ")");
     }
-    sb.append(" ON DUPLICATE KEY UPDATE visibility = VALUES(visibility)");
+    //sb.append(" ON DUPLICATE KEY UPDATE visibility = VALUES(visibility)");
+		//XXX woonhak - Postgresql Style Upsert 
+    sb.append(" ON CONFLICT ON CONSTRAINT " + linktable +"_pkey DO UPDATE SET visibility = EXCLUDED.visibility");
     String insert = sb.toString();
     if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
       logger.trace(insert);
@@ -542,10 +568,16 @@ public class LinkStoreMysql extends GraphStore {
                       ", 0" +
                       ", " + currentTime +
                       ", " + 0 + ") " +
-                      "ON DUPLICATE KEY UPDATE" +
-                      " count = IF (count = 0, 0, count - 1)" +
+                      //"ON DUPLICATE KEY UPDATE" +
+											//XXX woonhak - change duplicate ON CONFLICT 
+                      "ON CONFLICT ON CONSTRAINT " + counttable +	"_pkey " +
+											" DO UPDATE SET " +
+                      //" count = IF (count = 0, 0, count - 1)" +
+											//XXX woonhak - replace function IF() with CASE
+											" count = CASE WHEN " + dbid + "." + counttable + ".count = 0 THEN 0 " +
+											" ELSE " + dbid + "." + counttable + ".count - 1 END " +
                       ", time = " + currentTime +
-                      ", version = version + 1;";
+                      ", version = " + dbid + "." + counttable + ".version + 1;";
 
       if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
         logger.trace(update);
@@ -688,13 +720,16 @@ public class LinkStoreMysql extends GraphStore {
     String query = " select id1, id2, link_type," +
                    " visibility, data, time," +
                    " version from " + dbid + "." + linktable +
-                   " FORCE INDEX(`id1_type`) " +
+									 //XXX woonhak PostgreSQL does not allow to use hints for QP.
+                   //" FORCE INDEX(`id1_type`) " +
                    " where id1 = " + id1 + " and link_type = " + link_type +
                    " and time >= " + minTimestamp +
                    " and time <= " + maxTimestamp +
                    " and visibility = " + LinkStore.VISIBILITY_DEFAULT +
                    " order by time desc " +
-                   " limit " + offset + "," + limit + ";";
+                   //" limit " + offset + "," + limit + ";";
+									 //XXX woonhak PostgreSQL LIMIT  #,# not supported -> LIMIT # OFFSET #
+                   " LIMIT " + limit +  " OFFSET " + offset + ";";
 
     if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
       logger.trace("Query is " + query);
@@ -802,6 +837,7 @@ public class LinkStoreMysql extends GraphStore {
       }
     }
   }
+    boolean first = true;
 
   private void addBulkLinksImpl(String dbid, List<Link> links, boolean noinverse)
       throws Exception {
@@ -837,6 +873,8 @@ public class LinkStoreMysql extends GraphStore {
       return;
 
     StringBuilder sqlSB = new StringBuilder();
+
+		/*
     sqlSB.append("REPLACE INTO " + dbid + "." + counttable +
         "(id, link_type, count, time, version) " +
         "VALUES ");
@@ -847,11 +885,38 @@ public class LinkStoreMysql extends GraphStore {
       } else {
         sqlSB.append(",");
       }
+    boolean first = true;
       sqlSB.append("(" + count.id1 +
         ", " + count.link_type +
         ", " + count.count +
         ", " + count.time +
         ", " + count.version + ")");
+    }
+
+    String sql = sqlSB.toString();
+    if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
+      logger.trace(sql);
+    }
+    stmt_rw.executeUpdate(sql);
+    conn_rw.commit();
+		*/
+
+		/*XXX woonhak, there's no replace into,
+			so need to DELETE unconditionally,
+			then INSERT NEW values */
+    for (LinkCount count: counts) {
+			sqlSB.append("DELETE FROM " + dbid + "." + counttable +
+					" where id = "+ count.id1 +
+					" and link_type = " + count.link_type +
+					"; ");
+      sqlSB.append("INSERT INTO " + dbid + "." + counttable +
+					"(id, link_type, count, time, version) " +
+					"VALUES (" + count.id1 +
+        ", " + count.link_type +
+        ", " + count.count +
+        ", " + count.time +
+        ", " + count.version + ")");
+        sqlSB.append(";");
     }
 
     String sql = sqlSB.toString();
@@ -869,14 +934,22 @@ public class LinkStoreMysql extends GraphStore {
     }
   }
 
+
+	/*FIXME : woonhak,
+		these kind of dbid is same as schema of PostgreSQL,
+		so I might need to change this */
   @Override
   public void resetNodeStore(String dbid, long startID) throws Exception {
     checkNodeTableConfigured();
     // Truncate table deletes all data and allows us to reset autoincrement
-    stmt_rw.execute(String.format("TRUNCATE TABLE `%s`.`%s`;",
-                 dbid, nodetable));
+		stmt_rw.execute(String.format("TRUNCATE TABLE %s.%s;",
+					             dbid, nodetable));
+		/*
     stmt_rw.execute(String.format("ALTER TABLE `%s`.`%s` " +
         "AUTO_INCREMENT = %d;", dbid, nodetable, startID));
+		*/
+    stmt_rw.execute(String.format("ALTER SEQUENCE %s.nodetable_id_seq RESTART %d;",
+					dbid, startID));
   }
 
   @Override
@@ -914,7 +987,7 @@ public class LinkStoreMysql extends GraphStore {
   private long[] bulkAddNodesImpl(String dbid, List<Node> nodes) throws Exception {
     checkNodeTableConfigured();
     StringBuilder sql = new StringBuilder();
-    sql.append("INSERT INTO `" + dbid + "`.`" + nodetable + "` " +
+    sql.append("INSERT INTO " + dbid + "." + nodetable + " " +
         "(type, version, time, data) " +
         "VALUES ");
     boolean first = true;
@@ -925,12 +998,18 @@ public class LinkStoreMysql extends GraphStore {
         sql.append(",");
       }
       sql.append("(" + node.type + "," + node.version +
-          "," + node.time + "," + stringLiteral(node.data) + ")");
+          "," + node.time + "," + 
+					//stringLiteral(node.data) + 
+          //"convert_from(decode(" +  stringLiteral(node.data) + ", 'hex'), 'LATIN1')" +
+          "convert_from(" +  stringLiteral(node.data) + ", 'LATIN1')" +
+					")");
     }
-    sql.append("; commit;");
+    //sql.append("; commit;");
     if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
       logger.trace(sql);
     }
+
+		//XXX woonhak, 
     stmt_rw.executeUpdate(sql.toString(), Statement.RETURN_GENERATED_KEYS);
     ResultSet rs = stmt_rw.getGeneratedKeys();
 
@@ -969,7 +1048,7 @@ public class LinkStoreMysql extends GraphStore {
     checkNodeTableConfigured();
     ResultSet rs = stmt_ro.executeQuery(
       "SELECT id, type, version, time, data " +
-      "FROM `" + dbid + "`.`" + nodetable + "` " +
+      "FROM " + dbid + "." + nodetable + " " +
       "WHERE id=" + id + ";");
     if (rs.next()) {
       Node res = new Node(rs.getLong(1), rs.getInt(2),
@@ -1002,9 +1081,13 @@ public class LinkStoreMysql extends GraphStore {
 
   private boolean updateNodeImpl(String dbid, Node node) throws Exception {
     checkNodeTableConfigured();
-    String sql = "UPDATE `" + dbid + "`.`" + nodetable + "`" +
+									 //XXX woonhak - little bit complicated converting
+									 //stringLiteral(node.data) +
+    String sql = "UPDATE " + dbid + "." + nodetable +
             " SET " + "version=" + node.version + ", time=" + node.time
-                   + ", data=" + stringLiteral(node.data) +
+                   + ", data=" +
+									 //"convert_from(decode(" +  stringLiteral(node.data) + ", 'hex'), 'LATIN1')" +
+									 "convert_from(" +  stringLiteral(node.data) + ", 'LATIN1')" +
             " WHERE id=" + node.id + " AND type=" + node.type + "; commit;";
 
     if (Level.TRACE.isGreaterOrEqual(debuglevel)) {
@@ -1035,7 +1118,7 @@ public class LinkStoreMysql extends GraphStore {
   private boolean deleteNodeImpl(String dbid, int type, long id) throws Exception {
     checkNodeTableConfigured();
     int rows = stmt_rw.executeUpdate(
-        "DELETE FROM `" + dbid + "`.`" + nodetable + "` " +
+        "DELETE FROM " + dbid + "." + nodetable + " " +
         "WHERE id=" + id + " and type =" + type + "; commit;");
 
     if (rows == 0) {
@@ -1048,6 +1131,10 @@ public class LinkStoreMysql extends GraphStore {
     }
   }
 
+
+	/**
+	 * FIXME : woonhak, add this too */
+
   /**
    * Convert a byte array into a valid mysql string literal, assuming that
    * it will be inserted into a column with latin-1 encoding.
@@ -1056,6 +1143,21 @@ public class LinkStoreMysql extends GraphStore {
    * @param arr
    * @return
    */
+
+/* XXX woonhak, make string from byte */
+
+/*
+  private static String stringLiteral(byte arr[]) {
+    CharBuffer cb = Charset.forName("UTF8").decode(ByteBuffer.wrap(arr));
+    StringBuilder sb = new StringBuilder();
+
+		// I  think convert charset from utf8 to latin1 can be done in PostgreSQL functions
+		sb.append("convert_from('" + cb.toString() + "', 'UTF8', 'LATIN1')");
+
+    return sb.toString();
+  }
+	*/
+
   private static String stringLiteral(byte arr[]) {
     CharBuffer cb = Charset.forName("ISO-8859-1").decode(ByteBuffer.wrap(arr));
     StringBuilder sb = new StringBuilder();
@@ -1064,7 +1166,7 @@ public class LinkStoreMysql extends GraphStore {
       char c = cb.get(i);
       switch (c) {
         case '\'':
-          sb.append("\\'");
+          sb.append("\'\'");
           break;
         case '\\':
           sb.append("\\\\");
@@ -1105,7 +1207,10 @@ public class LinkStoreMysql extends GraphStore {
    */
   private static String hexStringLiteral(byte[] arr) {
     StringBuilder sb = new StringBuilder();
-    sb.append("x'");
+		/*woonhak, we're going to make PostgreSQL hex*/
+    //sb.append("x'");
+    sb.append("\'\\x");
+
     for (int i = 0; i < arr.length; i++) {
       byte b = arr[i];
       int lo = b & 0xf;

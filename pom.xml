@@ -43,15 +43,6 @@
         <tag>HEAD</tag>
     </scm>
 
-    <repositories>
-        <repository>
-            <id>snapshots-repo</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-            <releases><enabled>false</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
-        </repository>
-    </repositories>
-
     <dependencies>
         <dependency>
             <groupId>commons-cli</groupId>
@@ -62,40 +53,6 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
             <version>3.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-core</artifactId>
-            <version>0.20.2</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase</artifactId>
-            <version>0.94.3</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.guava</groupId>
-                    <artifactId>guava</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.jboss.netty</groupId>
-                    <artifactId>netty</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>asm</groupId>
-                    <artifactId>asm</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>com.facebook.swift</groupId>
-            <artifactId>swift-codec</artifactId>
-            <version>0.13.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.facebook.swift</groupId>
-            <artifactId>swift-service</artifactId>
-            <version>0.13.2</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
@@ -110,17 +67,24 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
-            <version>1.7.0</version>
+            <version>1.5.8</version>
         </dependency>
         <dependency>
             <groupId>mysql</groupId>
             <artifactId>mysql-connector-java</artifactId>
-            <version>5.1.22</version>
+            <version>5.1.38</version>
         </dependency>
+        <dependency>
+          <groupId>org.postgresql</groupId>
+          <artifactId>postgresql</artifactId>
+          <version>9.4.1211</version>
+        </dependency>
+ 
+ 
         <dependency>
             <groupId>org.tarantool</groupId>
             <artifactId>connector</artifactId>
-            <version>1.7.0-SNAPSHOT</version>
+            <version>1.7.0</version>
         </dependency>
     </dependencies>
 
@@ -186,6 +150,30 @@
                 </plugins>
             </build>
         </profile>
+				<!-- add new profile for PostgreSQL -->
+        <profile>
+            <id>pgsql</id>
+            <repositories>
+                <repository>
+                    <id>central</id>
+                    <url>http://repo1.maven.org/maven2</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+						<!-- woonhak - add this for connect to PostgreSQL -->
+						<dependencies>
+        			<dependency>
+								<groupId>org.postgresql</groupId>
+								<artifactId>postgresql</artifactId>
+								<version>9.4.1207.jre7</version>
+        			</dependency>
+						</dependencies>
+        		</profile>
     </profiles>
 
     <build>
@@ -264,29 +252,6 @@
                   <!-- Configure basic set of tests that don't have special
                        provider dependencies and aren't long-running -->
                   <excludedGroups>com.facebook.LinkBench.testtypes.ProviderTest</excludedGroups>
-              </configuration>
-            </plugin>
-            <plugin>
-              <groupId>com.facebook.mojo</groupId>
-              <artifactId>swift-maven-plugin</artifactId>
-              <version>0.13.2</version>
-              <executions>
-                <execution>
-                  <goals>
-                    <goal>generate</goal>
-                  </goals>
-                </execution>
-              </executions>
-              <configuration>
-                <idlFiles>
-                  <directory>
-                    ${basedir}/src/main/java/com/facebook/rocks/swift/
-                  </directory>
-                  <includes>
-                    <include>*</include>
-                  </includes>
-                </idlFiles>
-                <addCloseableInterface>true</addCloseableInterface>
               </configuration>
             </plugin>
         </plugins>
